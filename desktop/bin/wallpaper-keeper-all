@@ -1,0 +1,48 @@
+#!/bin/bash
+# 対象のディスプレイぜんぶで wallpaper-keeper を起動する。何回実行してもよい (keeper はロックで二重起動しない)
+# 対象: 設定の KEEPER_DISPLAYS (例 ":N :N-M")。空なら、この $USER の xfwm4 が動いているディスプレイ、
+# それも無ければ今の DISPLAY。--dry-run (または DRY_RUN=1) で起動せずに表示だけ
+for L in "${BOT_DESKTOP_LIB:-}" "$(dirname "$(readlink -f "$0")")/../lib/desktop.sh" "$HOME/.local/lib/bot-dotfiles/desktop.sh"; do
+  [ -n "$L" ] && [ -r "$L" ] && break; L=
+done
+[ -n "$L" ] || { echo "$(basename "$0"): desktop.sh が見つかりません (desktop/install.sh --apply を実行してください)" >&2; exit 1; }
+# shellcheck source=desktop/lib/desktop.sh
+. "$L"
+dry=
+[ "${1:-}" = --dry-run ] && dry=1
+bd_forced_dry && dry=1
+bot_load_conf
+KEEPER=$HOME/.local/bin/wallpaper-keeper
+[ -n "$dry" ] || [ -x "$KEEPER" ] || die "$KEEPER がありません (desktop/install.sh --apply を実行してください)"
+
+targets(){
+  local tok a b n
+  if [ -n "${KEEPER_DISPLAYS:-}" ]; then
+    for tok in $KEEPER_DISPLAYS; do
+      tok=${tok#:}
+      case $tok in
+        *-*) a=${tok%-*} b=${tok#*-}; b=${b#:}
+             case $a in ''|*[!0-9]*) echo "$BOT_ME: KEEPER_DISPLAYS の $tok が読めません" >&2; continue ;; esac
+             case $b in ''|*[!0-9]*) echo "$BOT_ME: KEEPER_DISPLAYS の $tok が読めません" >&2; continue ;; esac
+             for ((n = a; n <= b; n++)); do echo "$n"; done ;;
+        ''|*[!0-9]*) echo "$BOT_ME: KEEPER_DISPLAYS の $tok が読めません" >&2 ;;
+        *) echo "$tok" ;;
+      esac
+    done
+    return
+  fi
+  n=$(bot_wm_displays)
+  if [ -n "$n" ]; then echo "$n"; return; fi
+  n=${DISPLAY:-}; n=${n##*:}; n=${n%%.*}
+  case $n in ''|*[!0-9]*) ;; *) echo "$n" ;; esac
+}
+
+found=0
+for n in $(targets | sort -nu); do
+  [ -e "${X11_SOCKET_DIR:-/tmp/.X11-unix}/X$n" ] || continue
+  found=1
+  if [ -n "$dry" ]; then echo "(dry-run) display :$n -> keeper を起動"; continue; fi
+  bot_start_keeper ":$n"
+  echo "display :$n -> keeper started (or already running)"
+done
+[ "$found" -eq 1 ] || echo "$BOT_ME: 対象のディスプレイが見つかりません (KEEPER_DISPLAYS を見てください)" >&2

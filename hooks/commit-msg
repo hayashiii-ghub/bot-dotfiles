@@ -1,0 +1,25 @@
+#!/bin/bash
+# コミットメッセージの検査 (scripts/setup-hooks.sh で有効になる)
+# 形の検査と、あれば禁止語の検査をメッセージにかける。見つけた語は表示しない
+set -u
+root=$(git rev-parse --show-toplevel) || exit 1
+fail=0
+# 検査するのは残るメッセージだけ (コメント行と、commit -v で付く差分は外す)
+msg=$(mktemp); trap 'rm -f "$msg" "${pat:-}"' EXIT
+sed '/^# -* >8 -*$/,$d' "$1" | git stripspace --strip-comments >"$msg"
+"$root/scripts/check-shape.sh" -- "$msg" >/dev/null || { echo "commit-msg: メッセージが形の検査に通りません (パス・メール・ディスプレイ番号・日付つきの記録)" >&2; fail=1; }
+deny=
+for f in "${BOT_DOTFILES_DENYLIST:-}" "$HOME/.config/bot-dotfiles/denylist.txt" "${BOT_DOTFILES_LOCAL:+$BOT_DOTFILES_LOCAL/denylist.txt}"; do
+  [ -n "$f" ] && [ -r "$f" ] && { deny=$f; break; }
+done
+if [ -n "$deny" ]; then
+  pat=$(mktemp)
+  sed -e 's/\r$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$deny" | grep -v -e '^$' -e '^#' >"$pat"
+  if [ -s "$pat" ] && grep -qiF -f "$pat" "$msg"; then
+    echo "commit-msg: メッセージに禁止語があります (表示しません)" >&2; fail=1
+  fi
+else
+  echo "commit-msg: 注意: 禁止語リストが無いので、禁止語の検査をしていません" >&2
+fi
+[ "$fail" = 0 ] || { echo "commit-msg: コミットを止めました" >&2; exit 1; }
+exit 0

@@ -1,0 +1,23 @@
+# gitleaks の設定。既定のルールに、一般的な形のルールを足す
+title = "bot-dotfiles"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "env-style-secret"
+description = "KEY=VALUE の形で、名前に token / password / secret / api key を含み、値が入っているもの"
+regex = '''(?i)(?:^|[\s;])(?:export\s+)?[a-z0-9_]*(?:token|passwd|password|secret|api_?key)[a-z0-9_]*\s*=\s*['"]?([^\s'"$#]{8,})'''
+secretGroup = 1
+keywords = ["token", "passwd", "password", "secret", "apikey", "api_key"]
+
+[[rules]]
+id = "json-style-secret"
+description = "JSON で、キーに token / password / secret / api key を含み、値が入っているもの"
+regex = '''(?i)"[a-z0-9_-]*(?:token|passwd|password|secret|api_?key)[a-z0-9_-]*"\s*:\s*"([^"]{8,})"'''
+secretGroup = 1
+keywords = ["token", "passwd", "password", "secret", "apikey", "api_key"]
+
+[[allowlists]]
+description = "壁紙などの画像"
+paths = ['''\.(png|jpe?g|svg)$''']

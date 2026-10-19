@@ -1,0 +1,15 @@
+# id	repo のパス	HOME 下の置き先	扱い方 (copy|json-merge|xfconf|line|bin)	区分 (shared|per-display|layout)
+# 列はタブ区切り。id の頭 (xfce- / desktop-) で、どの install.sh が扱うかが決まる。*.tmpl と *.example は @NAME@ を設定の値にしてから置く
+xfce-xfconf	xfce/xfconf.tsv.tmpl	-	xfconf	shared
+xfce-terminalrc	xfce/terminalrc.tmpl	.config/xfce4/terminal/terminalrc	line	shared
+xfce-bookmarks	xfce/bookmarks.example	.config/gtk-3.0/bookmarks	line	shared
+desktop-lib-common	lib/common.sh	.local/lib/bot-dotfiles/common.sh	copy	shared
+desktop-lib	desktop/lib/desktop.sh	.local/lib/bot-dotfiles/desktop.sh	copy	shared
+desktop-config	desktop/config.env	.local/lib/bot-dotfiles/desktop.config.env	copy	shared
+desktop-wallpaper-dark	desktop/wallpaper.png	Pictures/bots-dark-wallpaper.png	copy	shared
+desktop-wallpaper-light	desktop/wallpaper-light.png	Pictures/bots-light-wallpaper.png	copy	shared
+desktop-look	desktop/bin/desktop-look	.local/bin/desktop-look	bin	per-display
+desktop-setup	desktop/bin/desktop-setup	.local/bin/desktop-setup	bin	layout
+desktop-keeper	desktop/bin/wallpaper-keeper	.local/bin/wallpaper-keeper	bin	per-display
+desktop-keeper-all	desktop/bin/wallpaper-keeper-all	.local/bin/wallpaper-keeper-all	bin	shared
+desktop-autostart	desktop/autostart/wallpaper-keeper.desktop.tmpl	.config/autostart/wallpaper-keeper.desktop	copy	per-display

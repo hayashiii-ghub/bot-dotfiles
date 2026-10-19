@@ -1,0 +1,107 @@
+#!/bin/bash
+# 左: ブラウザ / 右上: ターミナル / 右下: Thunar に並べる
+for L in "${BOT_DESKTOP_LIB:-}" "$(dirname "$(readlink -f "$0")")/../lib/desktop.sh" "$HOME/.local/lib/bot-dotfiles/desktop.sh"; do
+  [ -n "$L" ] && [ -r "$L" ] && break; L=
+done
+[ -n "$L" ] || { echo "$(basename "$0"): desktop.sh が見つかりません (desktop/install.sh --apply を実行してください)" >&2; exit 1; }
+# shellcheck source=desktop/lib/desktop.sh
+. "$L"
+bot_load_conf
+bot_resolve_display
+xdpyinfo >/dev/null 2>&1 || die "X ($DISPLAY, $BOT_DISPLAY_SRC から) に繋がりません"
+for t in wmctrl hsetroot xdotool xprop; do command -v "$t" >/dev/null || die "$t がありません (desktop/install.sh --apply)"; done
+ROLE=${TERM_ROLE:-main-terminal}
+RC=0
+err(){ echo "desktop-setup: $*" >&2; RC=1; }
+
+bot_import_dbus || err "xfwm4 not found for user $USER on $DISPLAY (DBUS_SESSION_BUS_ADDRESS not imported)"
+
+# Work area (excludes panels/docks that set struts); fall back to full screen
+read -r WX WY WW WH < <(xprop -root _NET_WORKAREA 2>/dev/null | awk -F' = ' 'NF>1{gsub(/ /,"",$2); split($2,a,","); print a[1]+0,a[2]+0,a[3]+0,a[4]+0}')
+if [ -z "$WW" ] || [ "$WW" -le 0 ] || [ "$WH" -le 0 ]; then
+  err "_NET_WORKAREA unavailable; using full screen"
+  read -r WW WH < <(xdpyinfo | awk '/dimensions/{split($2,a,"x");print a[1],a[2]}')
+  WX=0; WY=0
+fi
+[ -z "$WW" ] && { err "cannot determine screen size"; exit 1; }
+# plank doesn't reserve a strut, so keep room for it when the work area is the full screen
+SCR_H=$(xdpyinfo | awk '/dimensions/{split($2,a,"x");print a[2]}')
+if [ "$((WY+WH))" -ge "$SCR_H" ] && pgrep -u "$USER" -x plank >/dev/null; then WH=$((WH-${DOCK_RESERVE:-70})); fi
+HW=$((WW*${SPLIT_X:-50}/100)); HH=$((WH*${SPLIT_Y:-50}/100))
+
+prop(){ xprop -id "$1" "$2" 2>/dev/null; }
+is_normal(){ local t; t=$(prop "$1" _NET_WM_WINDOW_TYPE); [[ $t != *" = "* || $t == *_NET_WM_WINDOW_TYPE_NORMAL* ]]; }
+# ids whose WM_CLASS matches $1 (case-insensitive regex), newest last
+ids(){ wmctrl -lx 2>/dev/null | awk -v c="$1" 'tolower($0) ~ tolower(c) {print $1}'; }
+title(){ wmctrl -l 2>/dev/null | awk -v w="$1" '$1==w {$1=$2=$3=""; sub(/^ +/,""); print}'; }
+# normal window of class $1 whose title matches $2 (optional)
+win(){ local w r=; for w in $(ids "$1"); do is_normal "$w" || continue; [ -n "$2" ] && ! title "$w" | grep -q -- "$2" && continue; r=$w; done; echo "$r"; }
+term(){ local w r=; for w in $(ids xfce4-terminal); do prop "$w" WM_WINDOW_ROLE | grep -q "\"$ROLE\"" && r=$w; done
+  [ -z "$r" ] && [ -n "${TERM_TITLE:-}" ] && r=$(win xfce4-terminal "$TERM_TITLE"); echo "$r"; }
+waitfor(){ local _ w; for _ in $(seq "${WAIT_TRIES:-60}"); do w=$("$@"); [ -n "$w" ] && { echo "$w"; return 0; }; sleep 0.25; done; return 1; }
+
+# Place frame (incl. title bar/borders) inside cell x,y,w,h
+place(){
+  local id=$1 name=$2 cx=$3 cy=$4 cw=$5 ch=$6 L R T Bm X Y W H
+  [ -z "$id" ] && { err "$name: window not found"; return 1; }
+  xdotool windowmap "$id" 2>/dev/null
+  xdotool windowactivate "$id" 2>/dev/null; wmctrl -i -r "$id" -b remove,hidden 2>/dev/null
+  wmctrl -i -r "$id" -b remove,maximized_vert,maximized_horz,hidden
+  sleep 0.3
+  for _ in 1 2 3; do
+    read -r L R T Bm < <(prop "$id" _NET_FRAME_EXTENTS | awk -F' = ' '{if(NF>1){gsub(/ /,"",$2); split($2,a,","); print a[1]+0,a[2]+0,a[3]+0,a[4]+0; f=1}} END{if(!f) print 0,0,0,0}')
+    wmctrl -i -a "$id"
+    wmctrl -i -r "$id" -e "0,$cx,$cy,$((cw-L-R)),$((ch-T-Bm))"
+    sleep 0.3
+    X='' Y='' W='' H=''
+    eval "$(xdotool getwindowgeometry --shell "$id" 2>/dev/null | grep -E '^(X|Y|WIDTH|HEIGHT)=' | sed 's/WIDTH/W/;s/HEIGHT/H/')"
+    # client must lie inside the cell minus frame (2px slack); size may shrink by char-cell increments
+    if [ -n "$W" ] && [ "$((X-L))" -ge "$((cx-2))" ] && [ "$((Y-T))" -ge "$((cy-2))" ] \
+       && [ "$((X+W+R))" -le "$((cx+cw+2))" ] && [ "$((Y+H+Bm))" -le "$((cy+ch+2))" ] \
+       && [ "$W" -ge "$((cw-L-R-40))" ] && [ "$H" -ge "$((ch-T-Bm-40))" ]; then
+      return 0
+    fi
+    sleep 0.3
+  done
+  # reported geometry under xfwm4 is offset by the frame, so a mismatch here is informational only
+  [ -n "${DEBUG:-}" ] && echo "desktop-setup: $name: geometry check inconclusive ($X,$Y ${W}x$H)" >&2
+  return 0
+}
+
+# Browser candidates: "launch command|WM_CLASS|title" (BROWSER_CMD, then BROWSER_EXTRA, then BROWSER_CANDIDATES)
+CANDS=()
+[ -n "${BROWSER_CMD:-}" ] && CANDS+=("$BROWSER_CMD|${BROWSER_CLASS:-${BROWSER_CMD%% *}}|${BROWSER_TITLE:-}")
+read -r -a _extra <<<"${BROWSER_EXTRA:-}"
+read -r -a _base <<<"${BROWSER_CANDIDATES:-google-chrome|google-chrome|Chrome chromium|chromium|Chromium firefox|firefox|Firefox}"
+CANDS+=("${_extra[@]}" "${_base[@]}")
+browser_win(){ local c cmd cls tt w; for c in "${CANDS[@]}"; do IFS='|' read -r cmd cls tt <<<"$c"; w=$(win "$cls" "$tt"); [ -n "$w" ] && { echo "$w"; return; }; done; }
+B=$(browser_win)
+if [ -z "$B" ]; then
+  BCMD=
+  for c in "${CANDS[@]}"; do IFS='|' read -r cmd _ _ <<<"$c"; command -v "${cmd%% *}" >/dev/null && { BCMD=$cmd; break; }; done
+  if [ -n "$BCMD" ]; then
+    (setsid bash -c "$BCMD" >/dev/null 2>&1 </dev/null &)
+    B=$(WAIT_TRIES=120 waitfor browser_win)   # up to ~30s
+    [ -z "$B" ] && err "browser ($BCMD) did not open a window within ~30s"
+  else
+    echo "desktop-setup: warning: no browser found (BROWSER_CMD / BROWSER_EXTRA / BROWSER_CANDIDATES); skipping browser" >&2
+  fi
+fi
+[ -n "$B" ] && place "$B" browser "$WX" "$WY" "$HW" "$WH"
+
+T=$(term)
+if [ -z "$T" ]; then
+  (setsid xfce4-terminal --role="$ROLE" --working-directory="${WORK_DIR:-$HOME}" -x bash -lc "${TERM_CMD:-exec bash}" >/dev/null 2>&1 &)
+  T=$(waitfor term)
+fi
+place "$T" terminal "$((WX+HW))" "$WY" "$((WW-HW))" "$HH"
+
+F=$(win thunar)
+if [ -z "$F" ]; then
+  (setsid thunar "${WORK_DIR:-$HOME}" >/dev/null 2>&1 &)
+  F=$(waitfor win thunar)
+fi
+place "$F" Thunar "$((WX+HW))" "$((WY+HH))" "$((WW-HW))" "$((WH-HH))"
+
+bot_start_keeper
+exit $RC

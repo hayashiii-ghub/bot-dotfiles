@@ -1,0 +1,66 @@
+#!/bin/bash
+# コミット前の検査 (scripts/setup-hooks.sh で有効になる)
+#  1) 作者とコミッターのメールが GitHub の noreply アドレスでなければ止める
+#  2) gitleaks があれば、コミットする中身を検査
+#  3) 形の検査 (scripts/check-shape.sh --staged)
+#  4) 禁止語リスト ($BOT_DOTFILES_DENYLIST、~/.config/bot-dotfiles/denylist.txt、$BOT_DOTFILES_LOCAL/denylist.txt の順) があれば検査。無ければ警告
+# 見つけた語や値は表示しない (表示そのものが漏れになるため)
+set -u
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+fail=0
+
+for who in GIT_AUTHOR_IDENT GIT_COMMITTER_IDENT; do
+  email=$(git var "$who" | sed -n 's/.*<\([^>]*\)>.*/\1/p')
+  case $email in
+    *@users.noreply.github.com) ;;
+    *) echo "pre-commit: $who のメールが GitHub の noreply アドレスではありません。git config user.email を直してください" >&2; fail=1 ;;
+  esac
+done
+
+if command -v gitleaks >/dev/null 2>&1; then
+  cfg=()
+  [ -r .gitleaks.toml ] && cfg=(--config .gitleaks.toml)
+  gitleaks git --pre-commit --staged --redact --no-banner "${cfg[@]}" . >/dev/null 2>&1 ||
+    { echo "pre-commit: gitleaks が秘密らしいものを見つけました (gitleaks git --pre-commit --staged --redact -v で確かめる)" >&2; fail=1; }
+else
+  echo "pre-commit: 注意: gitleaks が無いので秘密の検査をしていません" >&2
+fi
+
+deny=
+for f in "${BOT_DOTFILES_DENYLIST:-}" "$HOME/.config/bot-dotfiles/denylist.txt" "${BOT_DOTFILES_LOCAL:+$BOT_DOTFILES_LOCAL/denylist.txt}"; do
+  [ -n "$f" ] && [ -r "$f" ] && { deny=$f; break; }
+done
+if [ -n "$deny" ]; then
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+  hidden=$tmp/hidden; : >"$hidden"
+  # 改行が CRLF だったり前後に空白があったりしても当たるように整える
+  sed -e 's/\r$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$deny" | grep -v -e '^$' -e '^#' >"$tmp/pat"
+  if [ -s "$tmp/pat" ]; then
+    while IFS= read -r -d '' f; do
+      # 名前が当たるファイルは、名前も表示しない
+      name=$f
+      if printf '%s\n' "$f" | grep -qiF -f "$tmp/pat"; then
+        name="(名前は表示しません)"
+        printf '%s\n' "$f" >>"$hidden"
+        echo "pre-commit: ファイル名が禁止語に当たります: $name" >&2; fail=1
+      fi
+      git show ":$f" >"$tmp/blob" 2>/dev/null || continue
+      n=$(grep -ciF -f "$tmp/pat" "$tmp/blob")
+      [ "$n" = 0 ] || { echo "pre-commit: $name: 禁止語に当たる行が $n 行あります" >&2; fail=1; }
+    done < <(git diff --cached --name-only -z --diff-filter=ACMR)
+  fi
+else
+  echo "pre-commit: 注意: 禁止語リストが無いので、禁止語の検査をしていません (BOT_DOTFILES_DENYLIST か ~/.config/bot-dotfiles/denylist.txt)" >&2
+fi
+
+# 禁止語に当たる名前のファイルは、形の検査の結果でも名前を伏せる
+shape=$(scripts/check-shape.sh --staged) || { echo "pre-commit: 形の検査に通りません" >&2; fail=1; }
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  if [ -n "${hidden:-}" ] && printf '%s\n' "${line%%:*}" | grep -qxF -f "$hidden"; then line="(名前は表示しません):${line#*:}"; fi
+  echo "$line" >&2
+done <<<"$shape"
+
+[ "$fail" = 0 ] || { echo "pre-commit: コミットを止めました" >&2; exit 1; }
+exit 0

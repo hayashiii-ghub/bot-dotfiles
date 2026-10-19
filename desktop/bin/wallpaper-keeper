@@ -1,0 +1,34 @@
+#!/bin/bash
+# 壁紙を貼りなおしつづける (ほかの何かが root の壁紙を差しかえたら戻す)
+# XFCE の autostart からでも、直接 (DISPLAY=:N wallpaper-keeper &) でも動く
+for L in "${BOT_DESKTOP_LIB:-}" "$(dirname "$(readlink -f "$0")")/../lib/desktop.sh" "$HOME/.local/lib/bot-dotfiles/desktop.sh"; do
+  [ -n "$L" ] && [ -r "$L" ] && break; L=
+done
+[ -n "$L" ] || { echo "$(basename "$0"): desktop.sh が見つかりません (desktop/install.sh --apply を実行してください)" >&2; exit 1; }
+# shellcheck source=desktop/lib/desktop.sh
+. "$L"
+bot_load_conf
+bot_resolve_display
+# ロックの名前は前の版の keeper と同じにしておく (変えると、同じディスプレイで古いものと2つ動いてしまう)
+N=${DISPLAY##*:}; N=${N%%.*}
+case $N in ''|*[!0-9]*) die "DISPLAY ($DISPLAY) からディスプレイ番号が取れません" ;; esac
+LOCK=/tmp/wallpaper-keeper$N.lock
+bot_wait_x "${KEEPER_X_TIMEOUT:-120}" || die "X ($DISPLAY) が ${KEEPER_X_TIMEOUT:-120} 秒待っても応答しません"
+exec 9>"$LOCK" || die "ロック $LOCK が作れません"
+flock -n 9 || exit 0   # この DISPLAY ではもう動いている
+for t in hsetroot xprop; do bot_tool_ok "$t" || die "$t が動きません (desktop/install.sh --apply で入れてください)"; done
+
+paint(){
+  IMG=$BOT_WALLPAPER
+  hsetroot -fill "$IMG" >/dev/null
+  # 画面を描く係 (compositor) が古い壁紙を覚えていて見た目が変わらないことがあるので
+  xrefresh 2>/dev/null
+  PIX=$(xprop -root _XROOTPMAP_ID 2>/dev/null)
+}
+paint
+while sleep "${KEEPER_INTERVAL:-20}" 9>&-; do
+  # 毎回読みなおす: look.env を切りかえたあと、古い壁紙に戻してしまわないように
+  bot_load_conf
+  cur=$(xprop -root _XROOTPMAP_ID 2>/dev/null)
+  if [ "$BOT_WALLPAPER" != "$IMG" ] || [ "$cur" != "$PIX" ]; then paint; fi
+done

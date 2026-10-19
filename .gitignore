@@ -1,0 +1,20 @@
+# 認証やマシン固有のものは入れない (1番目の守りは manifest と検査。これは2番目)
+*.local.env
+denylist.txt
+.env
+.env.*
+.credentials.json
+.claude.json
+auth.json
+*.key
+*.pem
+id_rsa*
+id_ed25519*
+*.token
+.npmrc
+.netrc
+*.bak
+# エディタやエージェントのローカル設定
+.claude/
+.vscode/
+.idea/

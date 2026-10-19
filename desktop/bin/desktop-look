@@ -1,0 +1,27 @@
+#!/bin/bash
+# このディスプレイに壁紙とテーマ (BOT_LOOK=dark/light) をあてて、wallpaper-keeper を起動する
+for L in "${BOT_DESKTOP_LIB:-}" "$(dirname "$(readlink -f "$0")")/../lib/desktop.sh" "$HOME/.local/lib/bot-dotfiles/desktop.sh"; do
+  [ -n "$L" ] && [ -r "$L" ] && break; L=
+done
+[ -n "$L" ] || { echo "$(basename "$0"): desktop.sh が見つかりません (desktop/install.sh --apply を実行してください)" >&2; exit 1; }
+# shellcheck source=desktop/lib/desktop.sh
+. "$L"
+# 見た目は look.env で全体に決める。ここで環境変数を使うと、すぐあとに keeper が look.env の壁紙に戻してしまう
+if [ -n "${BOT_LOOK:-}${WALLPAPER:-}${THEME_NAME:-}" ]; then
+  echo "desktop-look: BOT_LOOK / WALLPAPER / THEME_NAME の環境変数は使いません。変えるときは BOT_LOOK=light ./install-all.sh --apply" >&2
+  unset BOT_LOOK WALLPAPER THEME_NAME
+fi
+bot_load_conf
+bot_resolve_display
+xdpyinfo >/dev/null 2>&1 || die "X ($DISPLAY, $BOT_DISPLAY_SRC から) に繋がりません"
+for t in hsetroot xprop xfconf-query; do command -v "$t" >/dev/null || die "$t がありません (desktop/install.sh --apply)"; done
+bot_import_dbus || echo "desktop-look: DBUS_SESSION_BUS_ADDRESS が見つかりません (今の環境のまま続けます)" >&2
+hsetroot -fill "$BOT_WALLPAPER" >/dev/null
+if [ "$(xfconf-query -c xsettings -p /Net/ThemeName 2>/dev/null)" != "$BOT_THEME" ]; then
+  xfconf-query -c xsettings -p /Net/ThemeName -s "$BOT_THEME" 2>/dev/null ||
+    xfconf-query -c xsettings -p /Net/ThemeName -n -t string -s "$BOT_THEME"
+  # 動いている xfsettingsd が新しいテーマを配らないことがあるので、変えたときだけ入れかえる
+  xfsettingsd --replace --daemon >/dev/null 2>&1
+fi
+echo "desktop-look: $BOT_LOOK を $DISPLAY ($BOT_DISPLAY_SRC) にあてました"
+bot_start_keeper
