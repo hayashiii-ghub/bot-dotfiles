@@ -483,7 +483,7 @@ bd_apply_rows(){
   for i in "${!M_ID[@]}"; do
     case $sel in
       prefix:*) [[ ${M_ID[$i]} == "${sel#prefix:}"* ]] || continue ;;
-      local-only) [ "${M_ORIGIN[$i]}" = local ] && [ "${M_OVERRIDE[$i]}" = 0 ] || continue
+      local-only) [[ ${M_ORIGIN[$i]} == local && ${M_OVERRIDE[$i]} == 0 ]] || continue
                   bd__known_tool "${M_ID[$i]%%-*}" && continue ;;
     esac
     bd_apply_row "$i"
