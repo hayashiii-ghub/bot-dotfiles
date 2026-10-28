@@ -1,47 +1,31 @@
-# AGENTS.md — このリポジトリを直す人とエージェントへの約束
+# エージェント向け
 
-このリポジトリは公開されています。書いたものは誰でも読めます。
+説明は `README.md`、作業指示は `AGENTS.md` に集約し、別の説明文書は作成前に確認する。
 
-## 入れないもの
+## 公開・安全
 
-- 秘密: トークン、パスワード、鍵、認証ファイル、その一部。非公開リポジトリにも入れません。
-- 個人やマシンの値: 実際のホームのパス (`$HOME` と書く)、ユーザー名、メールアドレス、マシン名、具体的なディスプレイ番号 (`:N` と書く)、使っているサービスの名前、仕事や案件の名前、いつ何を入れたかの記録。
-- マシン固有の値は `~/.config/bot-dotfiles/*.local.env` か非公開リポジトリに置きます。ここには一般的な既定値だけを置きます。
-- 他の人が書いた文章の写し。リンクだけにします。
+- 公開リポジトリ。秘密値・認証ファイル・他人の文章の写しを入れない。秘密値は非公開リポジトリにも入れない。
+- 個人・マシン・仕事の固有値や導入履歴を入れない。ホームは `$HOME`、画面は `:N` と書く。固有の設定は `~/.config/bot-dotfiles/*.local.env` か非公開リポジトリへ。
+- 禁止語リストは `$BOT_DOTFILES_DENYLIST` → `~/.config/bot-dotfiles/denylist.txt` → `$BOT_DOTFILES_LOCAL/denylist.txt` の順。リスト自体・該当語・削除内容を公開せず、検査結果はファイル名と件数だけにする。
+- コミットの作者・コミッターはGitHubのnoreplyメールを使う。
 
-## 禁止語
+## 実装
 
-- 公開できない語 (案件名など) は、非公開の禁止語リストで検査します。`$BOT_DOTFILES_DENYLIST`、`~/.config/bot-dotfiles/denylist.txt`、`$BOT_DOTFILES_LOCAL/denylist.txt` の順に探し、最初に見つかったものを使います。
-- 禁止語リストそのものは、このリポジトリに入れません。何を消したかも、README やコミットメッセージに書きません。
-- 検査で見つけた語は表示しません。ファイル名と件数だけを出します。
-
-## 値は1か所
-
-- 何をどこに置くかは `manifest.tsv` にだけ書きます (列: id、repo のパス、HOME 下の置き先、扱い方、区分)。id の頭 (`xfce-`、`desktop-`) で、どの install.sh が扱うかが決まります。
-- 既定値は `<tool>/config.env` にだけ書きます。README には値をくり返しません。
-- 見た目 (`BOT_LOOK`) は `~/.config/bot-dotfiles/look.env` だけに覚えます。
-- `*.tmpl` と `*.example` は、`@NAME@` を設定の値に置きかえてから置きます。
-
-## スクリプトの作り
-
-- 共通の処理は `lib/common.sh` を使います。
-- 既定は表示だけ。`--apply` のときだけ書きます。`DRY_RUN=1` はいつでも書きません。
-- 書く前に差分を見せ、同じなら書きません。2回目の `--apply` で何も変わらないようにします。
-- `$HOME` の外 (apt、`npm -g`、sudo) は `--apply` かつ `NO_APT` が無いときだけ動かします (ふつうは `bd_run_system` を通す)。
-- プロセスを止めません (`pkill` や `kill` を使わない)。例外: `desktop-look` はテーマを変えたときだけ `xfsettingsd --replace` で入れかえます。
-- コメントには、コードから読み取れない理由や制約だけを書きます。
+- 配置の正本は `manifest.tsv`、既定値は `<tool>/config.env`、見た目は `~/.config/bot-dotfiles/look.env`。値を文書に重複させない。`*.tmpl` と `*.example` の `@NAME@` は設定値で置き換える。
+- 共通処理は `lib/common.sh`。既定は差分表示だけで、`--apply` のときだけ書く。`DRY_RUN=1` は常に書かず、同じ内容と2回目の適用は変更なしにする。
+- aptや `npm -g` など `$HOME` 外の処理は `--apply` かつ `NO_APT` なしのときだけ、通常は `bd_run_system` を通す。
+- プロセスを止めない。例外はテーマ変更時の `desktop-look` による `xfsettingsd --replace` だけ。コメントはコードから読めない理由・制約だけにする。
 
 ## 検査
 
-コミットの前に:
+コミット前に実行する。シェルを変えていなければshellcheckは不要。
 
 ```bash
-scripts/setup-hooks.sh            # 最初に1回。hooks/pre-commit が動くようになる
-scripts/check-shape.sh            # 形の検査
+scripts/setup-hooks.sh
+scripts/check-shape.sh
 shellcheck -x <変えたスクリプト>
-DRY_RUN=1 ./install-all.sh --apply   # 何も書かれないこと
+DRY_RUN=1 ./install-all.sh --apply
 ```
 
-`hooks/pre-commit` は、作者とコミッターのメールが GitHub の noreply でないとき、gitleaks か形の検査か禁止語の検査に当たったときに止めます。`hooks/commit-msg` はコミットメッセージに形の検査と禁止語の検査をかけます。CI (`.github/workflows/scan.yml`) は全履歴に gitleaks を、今のファイルに形の検査と shellcheck をかけます。
-
-テストは一時的な `HOME` で行い、xfconf-query や apt などはスタブに置きかえます。自分の `HOME` に `--apply` しないでください。
+フックはnoreply・gitleaks・形・禁止語を検査する。CIは全履歴のgitleaks、現在の形とshellcheckを実行する。禁止語リストがない場合の警告を、検査済みと扱わない。
+テストは一時的なホームとxfconf-query・apt等のスタブで行い、自分の `$HOME` に `--apply` しない。
